@@ -1,100 +1,152 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:audioplayers/audioplayers.dart';
+import 'package:timezone/timezone.dart' as tz;
+import 'package:timezone/data/latest.dart' as tz;
 
-/// NotificationService handles showing notifications when timer ends
 class NotificationService {
+  // ─────────────────────────────────────────────
+  // NOTIFICATION SETUP
+  // ─────────────────────────────────────────────
   static final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
+  // AudioPlayer للتيك تاك — static بحيث نتحكم فيه من أي مكان
+  static final AudioPlayer _tickPlayer = AudioPlayer();
+  static final AudioPlayer _alertPlayer = AudioPlayer();
+
   static bool _initialized = false;
 
-  /// Call this once in main.dart before the app starts
-  static Future<void> initialize() async {
+  static Future<void> init() async {
     if (_initialized) return;
+
+    tz.initializeTimeZones();
 
     const androidSettings =
         AndroidInitializationSettings('@mipmap/ic_launcher');
 
-    const iosSettings = DarwinInitializationSettings(
-      requestAlertPermission: true,
-      requestBadgePermission: true,
-      requestSoundPermission: true,
-    );
-
     const initSettings = InitializationSettings(
       android: androidSettings,
-      iOS: iosSettings,
     );
 
     await _notifications.initialize(initSettings);
+
+    await _notifications
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.requestNotificationsPermission();
     _initialized = true;
   }
 
-  /// Show a notification — withSound controls if it makes noise
-  static Future<void> _showNotification({
-    required String title,
-    required String body,
-    required bool withSound,
+  static Future<void> showLiveTimer({
+    required String timeLeft,
+    required String sessionType, // 'Focus' or 'Break'
   }) async {
-    // When withSound is true  → use default notification sound
-    // When withSound is false → silent notification (no sound)
+    const androidDetails = AndroidNotificationDetails(
+      'pomodoro_live_timer', // channel id
+      'Live Timer', // channel name
+      channelDescription: 'Shows remaining time for current Pomodoro session',
+      importance: Importance.low, // low = no sound with each update
+      priority: Priority.low,
+      ongoing: true, // لا يمكن تمريره للحذف
+      onlyAlertOnce: true, // ما يصدر صوت عند كل تحديث
+      showWhen: false,
+      autoCancel: false,
+      icon: '@mipmap/ic_launcher',
+    );
+
+    const details = NotificationDetails(android: androidDetails);
+
+    final emoji = sessionType == 'Focus' ? '🍅' : '☕';
+    final title = '$emoji $sessionType Session';
+    final body = 'Time remaining: $timeLeft';
+
+    await _notifications.show(
+      1, // notification id ثابت حتى يُحدَّث نفس الإشعار
+      title,
+      body,
+      details,
+    );
+  }
+
+  // إلغاء الإشعار الحي عند الإيقاف أو الانتهاء
+  static Future<void> cancelLiveTimer() async {
+    await _notifications.cancel(1);
+  }
+
+  // ─────────────────────────────────────────────
+  // COMPLETION NOTIFICATIONS
+  // ─────────────────────────────────────────────
+  static Future<void> showWorkComplete({bool withSound = true}) async {
     final androidDetails = AndroidNotificationDetails(
-      withSound ? 'pomodoro_sound' : 'pomodoro_silent',
-      withSound ? 'Pomodoro Timer (Sound)' : 'Pomodoro Timer (Silent)',
-      channelDescription: 'Pomodoro timer completion notifications',
+      'pomodoro_complete',
+      'Session Complete',
+      channelDescription: 'Notifies when a Pomodoro session ends',
       importance: Importance.high,
       priority: Priority.high,
-      playSound: withSound, // KEY: true = sound, false = silent
-      silent: !withSound, // KEY: true = silent, false = sound
-    );
-
-    const iosDetails = DarwinNotificationDetails();
-
-    final details = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    await _notifications.show(0, title, body, details);
-  }
-
-  /// Show notification: work session ended
-  static Future<void> showWorkComplete({bool withSound = true}) async {
-    await _showNotification(
-      title: '🎉 Work Session Complete!',
-      body: 'Great job! Time for a well-deserved break.',
-      withSound: withSound,
-    );
-  }
-
-  /// Show notification: break ended
-  static Future<void> showBreakComplete({bool withSound = true}) async {
-    await _showNotification(
-      title: '⏰ Break Over!',
-      body: 'Ready to focus again? Start your next Pomodoro!',
-      withSound: withSound,
-    );
-  }
-
-  /// Play a subtle tick sound (called every second if ticking enabled)
-  /// Note: on mobile this plays the default short notification sound
-  static Future<void> playTickSound() async {
-    final androidDetails = AndroidNotificationDetails(
-      'pomodoro_tick',
-      'Pomodoro Tick',
-      channelDescription: 'Subtle tick sound every second',
-      importance: Importance.low,
-      priority: Priority.low,
-      playSound: true,
-      silent: false,
-      onlyAlertOnce: true, // don't keep interrupting
+      playSound: withSound,
+      autoCancel: true,
     );
 
     final details = NotificationDetails(android: androidDetails);
-    await _notifications.show(1, '', '', details);
+
+    await _notifications.show(
+      2,
+      '🎉 Work Session Complete!',
+      'Great job! Time for a break.',
+      details,
+    );
   }
 
-  /// Cancel all pending notifications
-  static Future<void> cancelAll() async {
-    await _notifications.cancelAll();
+  static Future<void> showBreakComplete({bool withSound = true}) async {
+    final androidDetails = AndroidNotificationDetails(
+      'pomodoro_break_complete',
+      'Break Complete',
+      channelDescription: 'Notifies when a break ends',
+      importance: Importance.high,
+      priority: Priority.high,
+      playSound: withSound,
+      autoCancel: true,
+    );
+
+    final details = NotificationDetails(android: androidDetails);
+
+    await _notifications.show(
+      3,
+      '💪 Break Over!',
+      'Ready to focus again?',
+      details,
+    );
+  }
+
+  // ─────────────────────────────────────────────
+  // TICK SOUND
+  // ─────────────────────────────────────────────
+
+  // يشغّل صوت تيك تاك — نستخدم frequency على asset
+  static Future<void> startTickingSound() async {
+    // نشغّل ملف صوتي على loop
+    await _tickPlayer.setReleaseMode(ReleaseMode.loop);
+    await _tickPlayer.play(AssetSource('sounds/tick.mp3'));
+  }
+
+  static Future<void> stopTickingSound() async {
+    await _tickPlayer.stop();
+  }
+
+  // للتوافق مع الكود القديم في timer_provider
+  static Future<void> playTickSound() async {
+    // هذا الميثود موجود للتوافق — الـ loop يتم عبر startTickingSound
+  }
+
+  // ─────────────────────────────────────────────
+  // ALERT SOUND (work/break complete)
+  // ─────────────────────────────────────────────
+  static Future<void> playAlertSound() async {
+    await _alertPlayer.play(AssetSource('sounds/complete.mp3'));
+  }
+
+  static Future<void> dispose() async {
+    await _tickPlayer.dispose();
+    await _alertPlayer.dispose();
   }
 }

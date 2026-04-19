@@ -13,7 +13,7 @@ void main() async {
   // WidgetsFlutterBinding.ensureInitialized() is REQUIRED before any
   // async calls in main() - it sets up the Flutter framework
   WidgetsFlutterBinding.ensureInitialized();
-
+  await NotificationService.init();
   // Lock screen orientation to portrait (vertical only)
   await SystemChrome.setPreferredOrientations([
     DeviceOrientation.portraitUp,
@@ -21,8 +21,7 @@ void main() async {
   ]);
 
   // Initialize the notification service
-  await NotificationService.initialize();
-
+  await NotificationService.init();
   // Run the app
   runApp(const PomodoroApp());
 }

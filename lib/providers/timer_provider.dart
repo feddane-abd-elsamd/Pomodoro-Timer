@@ -112,14 +112,24 @@ class TimerProvider extends ChangeNotifier {
     } else {
       status = TimerStatus.running;
     }
-
+// ابدأ الإشعار الحي
+    NotificationService.showLiveTimer(
+      timeLeft: formattedTime,
+      sessionType: isOnBreak ? 'Break' : 'Focus',
+    );
+    // ابدأ صوت التيك تاك إذا مفعّل
+    if (soundEnabled && tickingSound) {
+      NotificationService.startTickingSound();
+    }
     _timer = Timer.periodic(const Duration(seconds: 1), (_) {
       if (_secondsLeft > 0) {
         _secondsLeft--;
         // Play ticking sound every second if enabled
-        if (soundEnabled && tickingSound) {
-          NotificationService.playTickSound();
-        }
+        // حدّث الإشعار الحي كل ثانية
+        NotificationService.showLiveTimer(
+          timeLeft: formattedTime,
+          sessionType: (status == TimerStatus.onBreak) ? 'Break' : 'Focus',
+        );
         notifyListeners();
       } else {
         _onTimerFinished();
@@ -131,6 +141,8 @@ class TimerProvider extends ChangeNotifier {
 
   void pause() {
     _timer?.cancel();
+    NotificationService.cancelLiveTimer();
+    NotificationService.stopTickingSound();
     if (status == TimerStatus.onBreak) {
       status = TimerStatus.breakPaused;
     } else {
@@ -141,6 +153,8 @@ class TimerProvider extends ChangeNotifier {
 
   void reset() {
     _timer?.cancel();
+    NotificationService.cancelLiveTimer();
+    NotificationService.stopTickingSound();
     status = TimerStatus.idle;
     _secondsLeft = workDurationMinutes * 60;
     _sessionStartTime = null;
